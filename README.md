@@ -1,1 +1,1 @@
-# Camera-Synthesizer
+# Hardware Sampler
