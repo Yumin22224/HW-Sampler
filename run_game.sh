@@ -12,4 +12,4 @@ else
 fi
 
 export SDL_VIDEODRIVER=wayland
-exec python src/main.py
+exec python src/main_starter.py
