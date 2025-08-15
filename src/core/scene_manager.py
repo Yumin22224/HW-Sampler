@@ -1,46 +1,40 @@
-# ============================================
-# core/scene_manager.py - 씬 관리
-# ============================================
-
-from scenes.bridge_scene import BridgeScene
-from scenes.work_lane.recording_scene import RecordingScene
-from scenes.work_lane.sound_crafting_scene import SoundCraftingScene
-from scenes.work_lane.loop_composition_scene import LoopCompositionScene
-from scenes.library_lane.library_scene import LibraryScene
+# core/scene_manager.py
+from typing import Dict, Type, Optional
 
 class SceneManager:
-    def __init__(self, screen, state_manager):
+    """
+    씬 등록/전환/업데이트/그리기만 담당하는 순수 매니저.
+    state_manager는 선택(없어도 동작).
+    """
+    def __init__(self, screen, state_manager: Optional[object] = None):
         self.screen = screen
         self.state_manager = state_manager
-        self.scenes = {}
-        self.current_scene = None
-        
-        # 씬 등록
-        self.register_scenes()
-    
-    def register_scenes(self):
-        self.scenes["bridge"] = BridgeScene(self.screen, self)
-        self.scenes["recording"] = RecordingScene(self.screen, self)
-        self.scenes["sound_crafting"] = SoundCraftingScene(self.screen, self)
-        self.scenes["loop_composition"] = LoopCompositionScene(self.screen, self)
-        self.scenes["library"] = LibraryScene(self.screen, self)
-    
-    def change_scene(self, scene_name, **kwargs):
-        if scene_name in self.scenes:
-            if self.current_scene:
-                self.current_scene.exit()
-            
-            self.current_scene = self.scenes[scene_name]
-            self.current_scene.enter(**kwargs)
-    
-    def handle_event(self, event):
-        if self.current_scene:
-            self.current_scene.handle_event(event)
-    
-    def update(self, dt, hw_state):
-        if self.current_scene:
-            self.current_scene.update(dt, hw_state)
-    
+        self._registry: Dict[str, Type] = {}
+        self.current = None
+        self.current_name = None
+
+    def register(self, name: str, scene_cls: Type):
+        self._registry[name] = scene_cls
+
+    def change_scene(self, name: str, **kwargs):
+        if self.current and hasattr(self.current, "exit"):
+            self.current.exit()
+
+        cls = self._registry.get(name)
+        if cls is None:
+            raise ValueError(f"Scene '{name}' not registered")
+
+        self.current = cls(self.screen, self)
+        self.current_name = name
+        if hasattr(self.current, "enter"):
+            self.current.enter(**kwargs)
+
+    def update(self, dt: float, hw_state: dict):
+        if self.current is not None:
+            # 씬이 개별 이벤트 루프를 쓰지 않는 설계이므로 hw_state만 전달
+            if hasattr(self.current, "update"):
+                self.current.update(dt, hw_state)
+
     def draw(self):
-        if self.current_scene:
-            self.current_scene.draw()
+        if self.current is not None and hasattr(self.current, "draw"):
+            self.current.draw()

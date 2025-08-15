@@ -8,16 +8,22 @@ HEIGHT = 480
 FPS = 60
 FULLSCREEN = True
 
-# Hardware Pins
+USE_GPIO = False  # 지금은 키보드 테스트만
+
+# 핀 매핑 (없는 핀은 None)
 BUTTON_PINS = {
-    "PUSH": None,           # P-C, P-DC, P-LC
-    "ROTARY_BUTTON": None,  # R-C
-    "ROTARY_A": None,       # R-R (A phase)
-    "ROTARY_B": None,       # R-R (B phase)
-    "TOGGLE_SHORT": None,   # STB
-    "TOGGLE_LONG": None,    # LTB
-    "RECORD": None,         # REC
+    "PUSH_BUTTON":    17,   # P-C/P-DC/P-LC
+    "ROTARY_BUTTON":  27,   # R-C
+    "REC_BUTTON":     22,   # REC
+    "ROTARY_A":       23,   # 로터리 A (단일 채널이면 이 핀만)
+    "ROTARY_B":       24,   # 로터리 B (단일 채널이면 None 가능)
 }
+
+# 디바운스/타이밍
+DEBOUNCE_MS     = 30
+DOUBLECLICK_MS  = 300
+LONGPRESS_MS    = 600
+
 
 # Audio Settings
 SAMPLE_RATE = 44100

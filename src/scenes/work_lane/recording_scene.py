@@ -48,8 +48,6 @@ class RecordingScene(BaseScene):
             if hw_state.get(RC):  self.proceed_to_next()
             if hw_state.get(PDC): self.toggle_playback()
             if hw_state.get(PLC): self.state = "PRE_RECORD"; self.recorded_sample = None
-            if hw_state.get(RR_CW):  self.move_focus(1)
-            if hw_state.get(RR_CCW): self.move_focus(-1)
     
     def start_recording(self):
         self.state = "RECORDING"

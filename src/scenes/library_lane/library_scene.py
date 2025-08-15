@@ -31,7 +31,7 @@ class LibraryScene(BaseScene):
     def update(self, dt, hw_state):
         # P-C: 뒤로 (Bridge로)
         if hw_state.get(PC):
-            self.scene_manager.change_scene("bridge")
+            self.scene_manager.change_scene("recording")
         
         # R-R: 망원경 초점 조절
         if hw_state.get(RR_CW):
