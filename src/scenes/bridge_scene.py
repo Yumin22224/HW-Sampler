@@ -3,33 +3,26 @@
 # ============================================
 
 from scenes.base_scene import BaseScene
+from utils.constants import PC, RC, RR_CW, RR_CCW
 import pygame
 
 class BridgeScene(BaseScene):
     def __init__(self, screen, scene_manager):
         super().__init__(screen, scene_manager)
-        self.options = ["Start Work Lane", "Go to Library"]
+        self.options = ["Repeat [Work Lane]", "Give Cat a Tail [Library Lane]"]
         self.selected = 0
     
-    def enter(self, **kwargs):
-        # Bridge 진입 시 처리
-        if kwargs.get("from_scene") == "loop_composition":
-            # 루프 완성 후 진입한 경우
-            self.show_tail_given_animation()
-    
     def update(self, dt, hw_state):
-        # Push Button으로 선택
-        if hw_state.get("PUSH_CLICK"):
+        # R-R: 선택 변경
+        if hw_state.get(RR_CW):   self.selected = (self.selected + 1) % len(self.options)
+        if hw_state.get(RR_CCW):  self.selected = (self.selected - 1) % len(self.options)
+
+        # R-C: 확정
+        if hw_state.get(RC):
             if self.selected == 0:
-                self.scene_manager.change_scene("recording")
+                self.scene_manager.change_scene("recording")  # Pre-record로
             else:
                 self.scene_manager.change_scene("library")
-        
-        # Rotary로 선택 변경
-        if hw_state.get("ROTARY_CW"):
-            self.selected = (self.selected + 1) % len(self.options)
-        elif hw_state.get("ROTARY_CCW"):
-            self.selected = (self.selected - 1) % len(self.options)
     
     def draw(self):
         # 배경
@@ -44,8 +37,6 @@ class BridgeScene(BaseScene):
             y = 200 + i * 80
             self.draw_text(option, 300, y, color)
         
-        # 안내 텍스트
-        self.draw_text("P-C: Select | R-R: Navigate", 250, 400, (100, 100, 100))
     
     def show_tail_given_animation(self):
         # 고양이에게 꼬리를 달아주는 애니메이션

@@ -5,6 +5,7 @@
 
 import pygame
 from scenes.base_scene import BaseScene
+from utils.constants import PC, RC, RR_CW, RR_CCW, PDC
 
 class LibraryScene(BaseScene):
     def __init__(self, screen, scene_manager):
@@ -29,26 +30,26 @@ class LibraryScene(BaseScene):
     
     def update(self, dt, hw_state):
         # P-C: 뒤로 (Bridge로)
-        if hw_state.get("PUSH_CLICK"):
+        if hw_state.get(PC):
             self.scene_manager.change_scene("bridge")
         
         # R-R: 망원경 초점 조절
-        if hw_state.get("ROTARY_CW"):
+        if hw_state.get(RR_CW):
             self.focus_distance = min(100, self.focus_distance + 5)
             self.update_view()
-        elif hw_state.get("ROTARY_CCW"):
+        elif hw_state.get(RR_CCW):
             self.focus_distance = max(0, self.focus_distance - 5)
             self.update_view()
         
         # R-C: 선택/훔치기
-        if hw_state.get("ROTARY_CLICK"):
+        if hw_state.get(RC):
             if self.view_mode == "TELESCOPE":
                 self.view_mode = "DETAIL"
             else:
                 self.steal_tail_pack()
         
         # P-DC: 미리듣기
-        if hw_state.get("PUSH_DOUBLE_CLICK"):
+        if hw_state.get(PDC):
             self.preview_pack()
     
     def update_view(self):

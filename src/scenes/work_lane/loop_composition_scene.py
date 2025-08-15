@@ -5,8 +5,11 @@
 
 import pygame
 from scenes.base_scene import BaseScene
+from utils.constants import PC, RC, RR_CW, RR_CCW, PDC, PLC
 
 class LoopCompositionScene(BaseScene):
+    MODES = ["LOOP_ADJUST","BAR_NAV","LAYER_NAV","SAMPLE_NAV","SAMPLE_ADJUST"]
+
     def __init__(self, screen, scene_manager):
         super().__init__(screen, scene_manager)
         self.layers = []  # 최대 4개 레이어
@@ -17,6 +20,10 @@ class LoopCompositionScene(BaseScene):
         self.sound_stones = []  # 세공된 소리 원석들
         self.loop_state = "EDITING"  # EDITING, PLAYING
         self.focus_element = 0  # 0: Layer, 1: Bar position, 2: Sample select
+        self.mode = "LOOP_ADJUST"
+        self.current_layer = 0
+        self.current_bar = 0
+        self.current_sample_idx = 0
     
     def enter(self, **kwargs):
         # 이전 씬에서 받은 sound_stone 추가
@@ -28,50 +35,64 @@ class LoopCompositionScene(BaseScene):
             self.layers = [[] for _ in range(4)]
     
     def update(self, dt, hw_state):
-        # P-C: 씬 이동 결정
-        if hw_state.get("PUSH_CLICK"):
+        # R-R: 현재 모드에서 이동
+        if hw_state.get(RR_CW):  self.move(+1)
+        if hw_state.get(RR_CCW): self.move(-1)
+
+        # R-C: 하위로 들어가기 / 배치/확정
+        if hw_state.get(RC):  self.enter_or_confirm()
+
+        # P-C: 상위로 나오기
+        if hw_state.get(PC):  self.back_or_cancel()
+
+        # P-DC: Play/Pause
+        if hw_state.get(PDC): self.toggle_playback()
+
+        # PLC: (옵션) 전체 리셋 or BPM 모드 전환 등
+    
+    def move(self, d):
+        if self.mode == "LOOP_ADJUST":
+            # 예: BPM/Key/Bars 중 포커스 이동
+            self.current_bar = (self.current_bar + d) % self.bars
+        elif self.mode == "BAR_NAV":
+            self.current_bar = (self.current_bar + d) % self.bars
+        elif self.mode == "LAYER_NAV":
+            self.current_layer = (self.current_layer + d) % 4
+        elif self.mode == "SAMPLE_NAV":
+            self.current_sample_idx = (self.current_sample_idx + d) % len(self.sound_stones)
+
+    def enter_or_confirm(self):
+        if self.mode == "LOOP_ADJUST":
+            # 최상단에서 'Complete' 선택 시만 완료
             if self.check_loop_complete():
-                # 루프 완성 -> Bridge로
                 self.complete_loop()
             else:
-                # 추가 샘플 필요 -> 다시 Recording으로
-                self.scene_manager.change_scene("recording")
-        
-        # R-C: 현재 위치에 샘플 배치/제거
-        if hw_state.get("ROTARY_CLICK"):
-            self.toggle_sample_at_position()
-        
-        # R-R: 네비게이션
-        if hw_state.get("ROTARY_CW"):
-            self.navigate_forward()
-        elif hw_state.get("ROTARY_CCW"):
-            self.navigate_backward()
-        
-        # P-DC: 재생/정지
-        if hw_state.get("PUSH_DOUBLE_CLICK"):
-            self.toggle_playback()
-        
-        # P-LC: BPM 조정 모드
-        if hw_state.get("PUSH_LONG_CLICK"):
-            self.enter_bpm_adjust_mode()
-    
-    def navigate_forward(self):
-        if self.focus_element == 0:  # Layer navigation
-            self.current_layer = (self.current_layer + 1) % 4
-        elif self.focus_element == 1:  # Bar navigation
-            self.current_bar = (self.current_bar + 1) % self.bars
-        elif self.focus_element == 2:  # Sample selection
-            # 다음 샘플 선택
+                self.mode = "BAR_NAV"
+        elif self.mode == "BAR_NAV":
+            self.mode = "LAYER_NAV"
+        elif self.mode == "LAYER_NAV":
+            self.mode = "SAMPLE_NAV"
+        elif self.mode == "SAMPLE_NAV":
+            self.place_or_toggle_sample()
+            # 배치 후 SAMPLE_NAV 유지
+        elif self.mode == "SAMPLE_ADJUST":
+            # 파라미터 확정 등
             pass
-    
-    def navigate_backward(self):
-        if self.focus_element == 0:
-            self.current_layer = (self.current_layer - 1) % 4
-        elif self.focus_element == 1:
-            self.current_bar = (self.current_bar - 1) % self.bars
-        elif self.focus_element == 2:
-            # 이전 샘플 선택
-            pass
+
+    def back_or_cancel(self):
+        order = self.MODES
+        idx = order.index(self.mode)
+        if idx > 0: self.mode = order[idx-1]
+        else:
+            # 최상위에서 Back은 Recording으로 (메타)
+            self.scene_manager.change_scene("recording")
+
+    def place_or_toggle_sample(self):
+        if not self.sound_stones: return
+        pos = (self.current_layer, self.current_bar)
+        # TODO: layers 구조에 현재 샘플 인덱스 토글 삽입/삭제
+
+
     
     def toggle_sample_at_position(self):
         # 현재 레이어와 바 위치에 샘플 배치/제거

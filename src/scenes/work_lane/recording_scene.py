@@ -7,6 +7,7 @@ import pygame
 import numpy as np
 from scenes.base_scene import BaseScene
 from audio.recorder import AudioRecorder
+from utils.constants import PC, RC, RR_CW, RR_CCW, PDC, PLC, REC
 
 class RecordingScene(BaseScene):
     def __init__(self, screen, scene_manager):
@@ -28,40 +29,27 @@ class RecordingScene(BaseScene):
     def update(self, dt, hw_state):
         if self.state == "PRE_RECORD":
             # P-C: Library로 이동
-            if hw_state.get("PUSH_CLICK"):
+            if hw_state.get(PC):
                 self.scene_manager.change_scene("library")
             
             # REC: 녹음 시작
-            if hw_state.get("RECORD_CLICK"):
+            if hw_state.get(REC):
                 self.start_recording()
         
         elif self.state == "RECORDING":
             # REC: 녹음 중지
-            if hw_state.get("RECORD_CLICK"):
+            if hw_state.get(REC):
                 self.stop_recording()
             
             # 애니메이션 업데이트
             self.animation_frame += dt * 10
         
         elif self.state == "POST_RECORD":
-            # R-C: 다음 씬으로
-            if hw_state.get("ROTARY_CLICK"):
-                self.proceed_to_next()
-            
-            # P-DC: 재생/정지 토글
-            if hw_state.get("PUSH_DOUBLE_CLICK"):
-                self.toggle_playback()
-            
-            # P-LC: 재녹음
-            if hw_state.get("PUSH_LONG_CLICK"):
-                self.state = "PRE_RECORD"
-                self.recorded_sample = None
-            
-            # R-R: 포커스 이동 (3개 요소)
-            if hw_state.get("ROTARY_CW"):
-                self.move_focus(1)
-            elif hw_state.get("ROTARY_CCW"):
-                self.move_focus(-1)
+            if hw_state.get(RC):  self.proceed_to_next()
+            if hw_state.get(PDC): self.toggle_playback()
+            if hw_state.get(PLC): self.state = "PRE_RECORD"; self.recorded_sample = None
+            if hw_state.get(RR_CW):  self.move_focus(1)
+            if hw_state.get(RR_CCW): self.move_focus(-1)
     
     def start_recording(self):
         self.state = "RECORDING"

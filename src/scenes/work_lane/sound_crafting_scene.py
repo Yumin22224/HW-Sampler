@@ -4,6 +4,7 @@
 """Sound Crafting Scene - 소리 세공"""
 
 from scenes.base_scene import BaseScene
+from utils.constants import PC, RC, RR_CW, RR_CCW, PDC, PLC
 import pygame
 
 class SoundCraftingScene(BaseScene):
@@ -12,8 +13,8 @@ class SoundCraftingScene(BaseScene):
         self.sample = None
         self.sound_stone = None
         self.current_tool = 0
-        self.tools = ["Trim", "Reverse", "Speed", "EQ"]
-        self.navigation_mode = "ADJUST"  # ADJUST or NAVIGATE
+        self.tools = ["Trim","Reverse","Speed","EQ","Low Pass","High Pass","Next"]
+        self.mode = "NAVIGATE"
         self.tool_cursor_position = 0
     
     def enter(self, **kwargs):
@@ -30,34 +31,29 @@ class SoundCraftingScene(BaseScene):
         }
     
     def update(self, dt, hw_state):
-        # P-C: 모드 전환
-        if hw_state.get("PUSH_CLICK"):
-            self.navigation_mode = "ADJUST" if self.navigation_mode == "NAVIGATE" else "NAVIGATE"
-        
-        # R-C: 툴 확정/적용
-        if hw_state.get("ROTARY_CLICK"):
-            if self.navigation_mode == "ADJUST":
-                self.apply_tool()
+        # P-C: Back to NAVIGATE
+        if hw_state.get(PC): self.mode = "NAVIGATE"
+
+        # R-R
+        if hw_state.get(RR_CW):
+            if self.mode == "NAVIGATE": self.current_tool = (self.current_tool + 1) % len(self.tools)
+            else: self.adjust_tool_parameter(+1)
+        if hw_state.get(RR_CCW):
+            if self.mode == "NAVIGATE": self.current_tool = (self.current_tool - 1) % len(self.tools)
+            else: self.adjust_tool_parameter(-1)
+
+        # R-C
+        if hw_state.get(RC):
+            sel = self.tools[self.current_tool]
+            if self.mode == "NAVIGATE":
+                if sel == "Next":
+                    self.scene_manager.change_scene("loop_composition", sound_stone=self.sound_stone)
+                else:
+                    self.mode = "ADJUST"      # 들어가기
             else:
-                # 다음 씬으로
-                self.scene_manager.change_scene("loop_composition",
-                                              sound_stone=self.sound_stone)
-        
-        # R-R: 회전
-        if hw_state.get("ROTARY_CW"):
-            if self.navigation_mode == "NAVIGATE":
-                self.current_tool = (self.current_tool + 1) % len(self.tools)
-            else:
-                self.adjust_tool_parameter(1)
-        elif hw_state.get("ROTARY_CCW"):
-            if self.navigation_mode == "NAVIGATE":
-                self.current_tool = (self.current_tool - 1) % len(self.tools)
-            else:
-                self.adjust_tool_parameter(-1)
-        
-        # P-DC: 미리듣기 토글
-        if hw_state.get("PUSH_DOUBLE_CLICK"):
-            self.toggle_preview()
+                self.apply_tool()             # 확정 후에도 ADJUST 유지 or NAVIGATE로 전환 선택
+        # P-DC: 미리듣기
+        if hw_state.get(PDC): self.toggle_preview()
     
     def apply_tool(self):
         # 현재 선택된 툴 적용

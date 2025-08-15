@@ -4,6 +4,7 @@
 
 import pygame
 from config import BUTTON_PINS
+from utils.constants import PC, RC, RR_CW, RR_CCW, PDC, PLC, REC
 
 class HardwareInput:
     def __init__(self):
@@ -11,6 +12,8 @@ class HardwareInput:
         self.last_rotary_state = (0, 0)
         self.button_states = {}
         self.button_timers = {}
+        self.state = {PC: False, RC: False, RR_CW: False, RR_CCW: False, PDC: False, PLC: False, REC: False}
+
         
         # GPIO 초기화 시도
         try:
@@ -65,14 +68,23 @@ class HardwareInput:
         # TODO: 쿼드러처 디코딩
         return {}
     
-    def handle_keyboard(self, event):
-        \"\"\"개발용 키보드 매핑\"\"\"
-        # Space: Push Button
-        # Left/Right: Rotary
-        # R: Record Button
-        # T: Toggle Buttons
-        pass
-    
     def cleanup(self):
         if self.gpio_available:
             self.GPIO.cleanup()
+
+# ============================================
+
+    def feed_event(self, event):
+        # 키보드 → 하드웨어 입력 에뮬
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE: self.state[PC] = True
+            elif event.key == pygame.K_RETURN: self.state[RC] = True
+            elif event.key == pygame.K_RIGHT: self.state[RR_CW] = True
+            elif event.key == pygame.K_LEFT: self.state[RR_CCW] = True
+            elif event.key == pygame.K_SPACE: self.state[PDC] = True
+            elif event.key == pygame.K_l: self.state[PLC] = True
+            elif event.key == pygame.K_r: self.state[REC] = True
+
+    def post_frame_reset(self):
+        for k in self.state:
+            self.state[k] = False
