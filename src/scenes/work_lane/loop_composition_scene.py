@@ -44,7 +44,8 @@ class LoopCompositionScene(BaseScene):
         self._ensure_bars(self.bars)
 
         # 포커스/커서
-        self.loop_focus = 0          # 0: Loop / 1:BPM / 2:Key / 3:Bars
+        self.loop_focus = 0          # 0: Loop / 1:BPM / 2:Key / 3:Bars / 4:Next
+        self.loop_adj_submode = "FOCUS"  # "FOCUS" | "ADJUST"
         self.current_bar = 0
         self.layer_cursor = 0        # 레이어 선택(⊕ 포함)
         self.current_layer = 0       # 실제 편집 타겟(샘플 작업 시)
@@ -140,23 +141,53 @@ class LoopCompositionScene(BaseScene):
 
     # ----- Mode 1: Loop Adjust -----
     def _update_loop_adjust(self, hw):
-        if hw.get(RR_CW):  self.loop_focus = (self.loop_focus + 1) % 4
-        if hw.get(RR_CCW): self.loop_focus = (self.loop_focus - 1) % 4
+        # 포커스 항목 개수
+        items = 5  # Loop, BPM, Key, Bars, Next
 
-        if hw.get(RC):
-            if self.loop_focus == 0:  # Loop → Bar Nav
-                self.mode = "BAR_NAV"
-            elif self.loop_focus == 1:  # BPM 값 조정 (R-C로 '확정' 개념만)
-                self.bpm = clamp(self.bpm + 1, 40, 220)
-            elif self.loop_focus == 2:  # Key
-                self.key_idx = (self.key_idx + 1) % len(KEYS)
-            elif self.loop_focus == 3:  # Bars
-                self.bars = clamp(self.bars + 1, 1, 16)
-                self._ensure_bars(self.bars)
+        if self.loop_adj_submode == "FOCUS":
+            # 포커스 링 이동
+            if hw.get(RR_CW):  self.loop_focus = (self.loop_focus + 1) % items
+            if hw.get(RR_CCW): self.loop_focus = (self.loop_focus - 1) % items
 
-        if hw.get(PC):
-            # 최상위라 Back 없음(무시)
-            pass
+            if hw.get(RC):
+                if self.loop_focus == 0:
+                    # 중앙 Loop 선택 → Bar Nav 진입
+                    self.mode = "BAR_NAV"
+                elif self.loop_focus in (1, 2, 3):
+                    # BPM/Key/Bars 조정 모드로 진입 (값 즉시 변경 X)
+                    self.loop_adj_submode = "ADJUST"
+                elif self.loop_focus == 4:
+                    # Next → Bridge
+                    self.scene_manager.change_scene(
+                        "bridge",
+                        from_scene="loop_composition",
+                        tail_pack=self._export_tail_pack()
+                    )
+
+            # 최상위라 P-C는 무시
+            if hw.get(PC):
+                pass
+
+        else:  # ADJUST
+            # 값 조정
+            if hw.get(RR_CW) or hw.get(RR_CCW):
+                d = 1 if hw.get(RR_CW) else -1
+                if self.loop_focus == 1:       # BPM
+                    self.bpm = clamp(self.bpm + d, 40, 220)
+                elif self.loop_focus == 2:     # Key
+                    self.key_idx = (self.key_idx + d) % len(KEYS)
+                elif self.loop_focus == 3:     # Bars
+                    old = self.bars
+                    self.bars = clamp(self.bars + d, 1, 16)
+                    if self.bars != old:
+                        self._ensure_bars(self.bars)
+
+            # 컨펌 → FOCUS 복귀
+            if hw.get(RC):
+                self.loop_adj_submode = "FOCUS"
+
+            # 취소(원복)은 요구에 없어서 P-C는 무시 (필요시 여기서 처리)
+
 
     # ----- Mode 2: Bar Navigation -----
     def _update_bar_nav(self, hw):
@@ -418,43 +449,105 @@ class LoopCompositionScene(BaseScene):
 
     # ---- Draw helpers ----
     def _draw_loop_adjust(self):
-        # 중앙 루프 미니맵
-        pygame.draw.rect(self.screen, (40, 46, 56), (100, 120, 600, 80), border_radius=8)
-        self.draw_text("Loop  [ Bar 0 | Bar 1 | Bar 2 | ... ]", 140, 150, (230, 230, 230))
+        """
+        Loop Adjust Mode 화면 그리기
+        - 중앙 루프 미니맵이 실제 포커스 대상(Loop)
+        - 상단 칩: BPM / Key / Bars / Next
+        - ADJUST 서브모드일 때 칩에 상태 반영
+        """
+        # 색상 팔레트
+        col_panel      = (50, 56, 68)
+        col_grid_light = (90, 98, 112)
+        col_chip_sel   = (60, 66, 78)
+        col_chip_idle  = (36, 40, 48)
+        col_focus      = (255, 200, 120)
+        col_text_sel   = (255, 200, 120)
+        col_text_idle  = (170, 170, 170)
+        col_text_dim   = (115, 115, 120)
 
-        # 상단 툴 버튼군 (Loop/BPM/Key/Bars)
-        items = ["Loop", "BPM", "Key", "Bars"]
-        x0 = 120
-        for i, name in enumerate(items):
-            x = x0 + i * 150
-            sel = (i == self.loop_focus)
-            pygame.draw.rect(self.screen, (55, 60, 72) if sel else (36, 40, 48),
-                             (x, 60, 120, 34), 0, border_radius=6)
-            col = (255, 200, 120) if sel else (160, 160, 160)
-            label = name
-            if name == "BPM": label += f": {self.bpm}"
-            if name == "Key": label += f": {KEYS[self.key_idx]}"
-            if name == "Bars": label += f": {self.bars}"
-            self.draw_text(label, x + 10, 68, col)
+        # --- 중앙 루프 미니맵(Bar 분절 표시) ---
+        x0, y0, W, H = 100, 120, 600, 100
+        sel_loop = (self.loop_focus == 0)
 
-        # 안내
-        self.draw_text("R-R: Move focus  |  R-C: Drill/Confirm  |  P-DC: Preview", 160, 420, (115, 115, 120))
+        # 패널
+        pygame.draw.rect(self.screen, col_panel, (x0, y0, W, H), 0, border_radius=12)
+
+        # Bar 분절 라인 (루프 전체가 이미 바들로 분절돼 보이는 상태)
+        if self.bars > 0:
+            for b in range(self.bars + 1):
+                x = x0 + int(W * b / self.bars)
+                pygame.draw.line(self.screen, col_grid_light, (x, y0), (x, y0 + H), 1)
+
+        # 포커스 링(Loop 선택 중일 때만)
+        if sel_loop:
+            pygame.draw.rect(self.screen, col_focus, (x0 - 3, y0 - 3, W + 6, H + 6), 2, border_radius=14)
+
+        # 캡션
+        self.draw_text("Loop (Drill with R-C)", x0 + 10, y0 - 24, (200, 200, 210))
+
+        # --- 상단 칩: BPM / Key / Bars / Next (Loop는 중앙이므로 칩에서 제외) ---
+        chips = ["BPM", "Key", "Bars", "Next"]
+        values = [str(self.bpm), KEYS[self.key_idx], str(self.bars), ""]
+        x = 110
+        for i, name in enumerate(chips):
+            idx = i + 1                      # Loop=0, 칩 인덱스는 1..4
+            sel = (self.loop_focus == idx)
+            rect = pygame.Rect(x, 60, 150, 36)
+
+            # 선택/비선택 배경
+            pygame.draw.rect(self.screen, col_chip_sel if sel else col_chip_idle, rect, 0, border_radius=8)
+
+            # 라벨(ADJUST 상태 반영)
+            label = name if name == "Next" else f"{name}: {values[i]}"
+            if sel and self.loop_adj_submode == "ADJUST" and name != "Next":
+                label += "  (Adjusting)"
+            self.draw_text(label, rect.x + 10, rect.y + 8, col_text_sel if sel else col_text_idle)
+
+            x += 160  # 칩 간 간격
+
+        # --- 힌트 ---
+        if self.loop_adj_submode == "FOCUS":
+            hint = "R-R: Move focus  |  R-C: Drill/Adjust  |  P-DC: Preview"
+        else:  # ADJUST
+            hint = "R-R: Change value  |  R-C: Confirm (return to FOCUS)"
+        self.draw_text(hint, 140, 420, col_text_dim)
+
 
     def _draw_bar_nav(self):
-        # 바 리스트
         self.draw_text("Select Bar", 120, 80, (200, 200, 210))
-        x0, y0, w, h = 100, 120, 600, 80
-        pygame.draw.rect(self.screen, (40, 46, 56), (x0, y0, w, h), border_radius=8)
 
+        x0, y0, W, H = 100, 120, 600, 120
+        pygame.draw.rect(self.screen, (40, 46, 56), (x0, y0, W, H), border_radius=10)
+
+        # Bar들을 가로로 배치하되, 각 카드 내부는 레이어를 세로 스택으로 미니맵 표시
         for b in range(self.bars):
-            bx = x0 + int(w * b / self.bars)
-            bw = int(w / self.bars) - 4
-            rect = (bx + 2, y0 + 8, bw, h - 16)
+            # 각 Bar의 카드 사각형
+            bw = int(W / self.bars) - 6
+            bx = x0 + 3 + b * (bw + 6)
+            by = y0 + 8
             sel = (b == self.current_bar)
-            pygame.draw.rect(self.screen, (80, 110, 170) if sel else (60, 66, 78), rect, 0, border_radius=6)
-            self.draw_text(f"Bar {b}", bx + 10, y0 + 38, (250, 230, 200) if sel else (160, 160, 160))
+            pygame.draw.rect(self.screen, (80, 110, 170) if sel else (60, 66, 78),
+                            (bx, by, bw, H - 16), 0, border_radius=8)
+            self.draw_text(f"Bar {b}", bx + 8, by + 6, (250, 230, 200) if sel else (170, 170, 170))
 
-        self.draw_text("R-R: Move  |  R-C: Enter Layer  |  P-C: Back  |  P-LC: Reset Bar", 120, 420, (115, 115, 120))
+            # 카드 내부: 레이어들을 세로 스택(행)으로 나열
+            layers_here = self.grid[b]
+            L = max(1, len(self.layers))
+            row_h = (H - 40) // L          # 카드 내부 높이를 레이어 수로 나눔
+            inner_x = bx + 8
+            inner_y = by + 24
+            inner_w = bw - 16
+
+            for li in range(L):
+                ly = inner_y + li * row_h
+                # 해당 레이어에 샘플이 있으면 밝게, 없으면 어둡게
+                has_any = len(layers_here[li]) > 0
+                pygame.draw.rect(self.screen, (150, 110, 200) if has_any else (90, 96, 112),
+                                (inner_x, ly + 4, inner_w, row_h - 8), 0, border_radius=4)
+
+        self.draw_text("R-R: Move  |  R-C: Enter Layer  |  P-C: Back  |  P-LC: Reset Bar",
+                    120, 420, (115, 115, 120))
+
 
     def _draw_layer_nav(self):
         self.draw_text(f"Bar {self.current_bar} - Select Layer", 120, 80, (200, 200, 210))
@@ -557,3 +650,31 @@ class LoopCompositionScene(BaseScene):
         pygame.draw.rect(self.screen, (70, 76, 92), (x, y, w, h), 0, border_radius=6)
         pygame.draw.rect(self.screen, (255, 150, 60), (x, y, int(w * ratio), h), 0, border_radius=6)
         self.draw_text(f" {label}", x + w + 10, y - 2, (170, 170, 170))
+
+
+    # --- Tail Pack Export ---
+    def _export_tail_pack(self):
+        """Bridge로 넘길 TailPack 생성"""
+        return {
+            "bpm": self.bpm,
+            "key": KEYS[self.key_idx],
+            "bars": self.bars,
+            "layers": len(self.layers),
+            "grid": [
+                [
+                    [
+                        {
+                            "start": s["start"],
+                            "length": s["length"],
+                            "melody": s["melody"],
+                            "pitch": s["pitch"],
+                            "gain": s["gain"],
+                            "tpl_name": (s["tpl"]["name"] if s.get("tpl") else None),
+                        }
+                        for s in self.grid[b][l]
+                    ]
+                    for l in range(len(self.layers))
+                ]
+                for b in range(self.bars)
+            ],
+        }
