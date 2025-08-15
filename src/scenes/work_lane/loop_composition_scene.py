@@ -51,6 +51,8 @@ class LoopCompositionScene(BaseScene):
         self.current_layer = 0       # 실제 편집 타겟(샘플 작업 시)
         self.tick = 0                # Sample Nav 커서 (0..FINE_STEPS-1)
         self.selected_sample = None  # Sample Adjust 타깃
+        self.sa_submode = "FOCUS"   # "FOCUS" | "ADJUST" for Sample Adjust
+        self._sa_focus_idx = 0      # index within focusable list [Toggle,(Pitch),Gain]
 
         # 샘플 팔레트(Work Lane에서 넘어온 최신 sound_stone)
         self.palette = []            # [{id, name, length_ticks, data...}]
@@ -309,59 +311,97 @@ class LoopCompositionScene(BaseScene):
         samples.sort(key=lambda s: s["start"])
 
     # ----- Mode 5: Sample Adjust -----
+    def _sa_focusable_list(self):
+        """
+        Sample Adjust 화면에서 포커스 가능한 항목 리스트를 반환.
+        0: Toggle(Melody/Rhythm), 1: Pitch, 2: Gain
+        Melody=False(=Rhythm)이면 Pitch(1)를 제외한다.
+        """
+        s = self.selected_sample
+        if s is None:
+            return [0, 2]  # 방어값
+        return [0, 2] if not s.get("melody", True) else [0, 1, 2]
+
     def _update_sample_adjust(self, hw):
         s = self.selected_sample
         if s is None:
             self.mode = "SAMPLE_NAV"
             return
 
-        # 포커스: 0:Toggle, 1:Pitch, 2:Gain
-        if not hasattr(self, "_sa_focus"):
-            self._sa_focus = 0
-        if hw.get(RR_CW):  self._sa_focus = (self._sa_focus + 1) % 3
-        if hw.get(RR_CCW): self._sa_focus = (self._sa_focus - 1) % 3
+        # 현재 포커스 가능한 항목 계산 (Melody=False면 Pitch 제외)
+        flist = self._sa_focusable_list()        # e.g., [0,1,2] or [0,2]
+        if self._sa_focus_idx >= len(flist):
+            self._sa_focus_idx = max(0, len(flist) - 1)
+        cur = flist[self._sa_focus_idx]          # 0:Toggle, 1:Pitch, 2:Gain
 
-        if hw.get(RC):
-            # Pitch/Gain은 R-C로 '컨펌' 개념만 두고 값은 R-R에서 이미 적용
-            if self._sa_focus == 0:
-                s["melody"] = not s["melody"]   # Melody/Rhythm 토글
-            # 1,2는 컨펌해도 머무름
-
+        # --- P-C: Pitch 조정 시 크로매틱 모드(콤보) / 실패 시 Back ---
         if hw.get(PC):
-            # Pitch에서 P-C + R-R을 지원해야 함 → 콤보 모드로 전환
             self._pc_combo_started = True
             self._pc_combo_deadline = pygame.time.get_ticks() + PC_COMBO_MS
-            # Back은 콤보 실패 시 동작(최상위 update에서 처리)
+            # 콤보 실패 시 Back은 상위 update()의 만료 처리에서 수행
 
-        # 값 조정
+        # --- R-R: FOCUS에선 항목 이동, ADJUST에선 값 변경 ---
         if hw.get(RR_CW) or hw.get(RR_CCW):
             d = 1 if hw.get(RR_CW) else -1
-            if self._sa_focus == 1:  # Pitch
-                if s["melody"]:
-                    # Melody 모드: 기본은 스케일 스텝, P-C 콤보면 크로매틱
-                    if self._pc_combo_started:
-                        s["pitch"] = clamp(s["pitch"] + d, -24, 24)
-                        self._pc_combo_started = False  # 콤보 소비 → Back 취소
-                    else:
-                        # 스케일 스텝 이동
-                        s["pitch"] = self._pitch_step_in_scale(s["pitch"], d)
-                else:
-                    # Rhythm 모드에선 pitch 조정 무시
-                    pass
-            elif self._sa_focus == 2:  # Gain
-                s["gain"] = clamp(s["gain"] + d * 2, 0, 200)
 
+            if self.sa_submode == "FOCUS":
+                # 포커스 이동 (flist 내부 인덱스를 회전)
+                self._sa_focus_idx = (self._sa_focus_idx + d) % len(flist)
+
+            else:  # ADJUST
+                if cur == 1:  # Pitch
+                    if not s.get("melody", True):
+                        # Melody OFF이면 Pitch는 조정 대상이 아님 → FOCUS 복귀
+                        self.sa_submode = "FOCUS"
+                    else:
+                        # Melody ON: 기본은 스케일 스텝, P-C 콤보면 크로매틱
+                        if self._pc_combo_started:
+                            s["pitch"] = clamp(s["pitch"] + d, -24, 24)
+                            self._pc_combo_started = False  # 콤보 소비 → Back 취소
+                        else:
+                            s["pitch"] = self._pitch_step_in_scale(s["pitch"], d)
+
+                elif cur == 2:  # Gain
+                    s["gain"] = clamp(s["gain"] + d * 2, 0, 200)
+                # cur == 0(Toggle)은 ADJUST 진입하지 않음
+
+        # --- R-C: FOCUS→ADJUST 진입 or Toggle / ADJUST→Confirm ---
+        if hw.get(RC):
+            if self.sa_submode == "FOCUS":
+                if cur == 0:
+                    # Melody/Rhythm 토글
+                    s["melody"] = not s["melody"]
+                    # Melody가 OFF가 되면 Pitch는 포커스 대상에서 제외되므로 보정
+                    if not s["melody"]:
+                        flist = self._sa_focusable_list()
+                        if 1 not in flist and cur == 1:
+                            # (이론상 cur는 0이라 여기 안 걸리지만 방어)
+                            pass
+                        # 만약 Pitch를 보고 있었다면 Gain으로 이동
+                        if self._sa_focus_idx >= len(flist):
+                            self._sa_focus_idx = len(flist) - 1
+                    # 토글은 여기서 끝(ADJUST 진입 없음)
+                elif cur in (1, 2):
+                    # Pitch/Gain 조정 시작
+                    # (값은 R-R로 변경, Confirm 후에도 SAMPLE_ADJUST에 머무름)
+                    self.sa_submode = "ADJUST"
+            else:
+                # ADJUST → Confirm 후 FOCUS로 복귀 (값은 이미 반영됨)
+                self.sa_submode = "FOCUS"
+
+        # --- P-DC: 샘플 프리뷰 ---
         if hw.get(PDC):
             self._preview_sample(s)
 
+        # --- P-LC: 리셋 ---
         if hw.get(PLC):
             s["pitch"] = 0
             s["gain"] = 100
             s["melody"] = True
+            # 포커스 가능한 항목 복구
+            self.sa_submode = "FOCUS"
+            self._sa_focus_idx = 0
 
-        # Back 처리: 콤보가 아니면 상위로
-        # (콤보는 update()에서 타이머 만료 시 Back 실행)
-        # 여기서는 별도 처리 없이 둔다.
 
     def _pitch_step_in_scale(self, cur_semi, dir_):
         """
@@ -607,34 +647,64 @@ class LoopCompositionScene(BaseScene):
 
     def _draw_sample_adjust(self):
         s = self.selected_sample
-        self.draw_text(f"Edit Sample  (Bar {self.current_bar}, Layer {self.current_layer})", 120, 72, (200, 200, 210))
+        self.draw_text(f"Edit Sample  (Bar {self.current_bar}, Layer {self.current_layer})",
+                    120, 72, (200, 200, 210))
 
         # 카드 UI
         x0, y0, W, H = 90, 120, 620, 220
         pygame.draw.rect(self.screen, (40, 46, 56), (x0, y0, W, H), 0, border_radius=12)
 
-        # 파라미터 3종: Toggle, Pitch, Gain
-        items = ["Melody/Rhythm", "Pitch", "Gain"]
-        for i, name in enumerate(items):
-            y = y0 + 20 + i * 64
-            sel = (getattr(self, "_sa_focus", 0) == i)
-            pygame.draw.rect(self.screen, (60, 66, 78) if not sel else (80, 110, 170),
-                             (x0 + 20, y, W - 40, 44), 0, border_radius=8)
-            self.draw_text(name, x0 + 34, y + 12, (250, 230, 200) if sel else (170, 170, 170))
+        # 포커스 가능한 항목과 현재 항목
+        flist = self._sa_focusable_list()     # [0,1,2] or [0,2]
+        cur = flist[self._sa_focus_idx]
+        names = {0: "Melody/Rhythm", 1: "Pitch", 2: "Gain"}
 
-            if name == "Melody/Rhythm":
-                txt = "Melody (Pitch active)" if s and s["melody"] else "Rhythm (Pitch ignored)"
-                self.draw_text(txt, x0 + 240, y + 12, (200, 220, 200) if s and s["melody"] else (220, 180, 180))
-            elif name == "Pitch":
-                val = 0 if not s else s["pitch"]
-                self._draw_value_bar(x0 + 240, y + 12, 280, 20, (val + 24) / 48.0,
-                                     f"{'+' if val>=0 else ''}{val} semitones")
-            elif name == "Gain":
-                val = 100 if not s else s["gain"]
+        # 세 줄 고정 배치(비활성화/선택/조정 상태 반영)
+        rows = [0, 1, 2]
+        for row_i, item_id in enumerate(rows):
+            y = y0 + 20 + row_i * 64
+            selectable = (item_id in flist)
+            selected   = (item_id == cur)
+            adjusting  = selected and self.sa_submode == "ADJUST" and item_id in (1, 2)
+
+            base_col = (60, 66, 78)
+            sel_col  = (80, 110, 170)
+            dis_col  = (52, 56, 64)
+
+            # 배경
+            bg = dis_col if not selectable else (sel_col if selected else base_col)
+            pygame.draw.rect(self.screen, bg, (x0 + 20, y, W - 40, 44), 0, border_radius=8)
+
+            # 라벨
+            label_col = (140, 140, 140) if not selectable else ((250, 230, 200) if selected else (170, 170, 170))
+            label = names[item_id]
+            if adjusting:
+                label += "  (Adjusting)"
+            # Melody 상태 텍스트
+            if item_id == 0:
+                txt = "Melody (Pitch active)" if s and s.get("melody", True) else "Rhythm (Pitch disabled)"
+                self.draw_text(label, x0 + 34, y + 12, label_col)
+                self.draw_text(txt,   x0 + 280, y + 12,
+                            (200, 220, 200) if s and s.get("melody", True) else (220, 180, 180))
+            elif item_id == 1:  # Pitch
+                self.draw_text(label, x0 + 34, y + 12, label_col)
+                if selectable:
+                    val = 0 if not s else s.get("pitch", 0)
+                    self._draw_value_bar(x0 + 240, y + 12, 280, 20, (val + 24) / 48.0,
+                                        f"{'+' if val>=0 else ''}{val} semitones")
+                else:
+                    self.draw_text(" — (disabled in Rhythm)", x0 + 240, y + 12, (130, 130, 130))
+            elif item_id == 2:  # Gain
+                self.draw_text(label, x0 + 34, y + 12, label_col)
+                val = 100 if not s else s.get("gain", 100)
                 self._draw_value_bar(x0 + 240, y + 12, 280, 20, val / 200.0, f"{val}%")
 
-        self.draw_text("R-R: Move/Adjust  |  R-C: Toggle/Confirm  |  P-C: Back  |  P-DC: Preview  |  P-LC: Reset", 
-                       100, 420, (115, 115, 120))
+        # 힌트
+        if self.sa_submode == "FOCUS":
+            hint = "R-R: Move focus  |  R-C: Toggle/Enter Adjust  |  P-C: Back(hold) / Pitch Chromatic(mod)"
+        else:
+            hint = "R-R: Change value  |  R-C: Confirm (return to FOCUS)  |  P-C: Chromatic(mod, Pitch only)"
+        self.draw_text(hint, 100, 420, (115, 115, 120))
 
         # 하단 샘플 타임미니맵(선택영역 표시)
         xg, yg, Wg, Hg = 100, 360, 600, 10
@@ -643,6 +713,7 @@ class LoopCompositionScene(BaseScene):
             sx = xg + int(Wg * (s["start"] / FINE_STEPS))
             ex = xg + int(Wg * ((s["start"] + s["length"]) / FINE_STEPS))
             pygame.draw.rect(self.screen, (255, 210, 120), (sx, yg, max(2, ex - sx), Hg), 0, border_radius=5)
+
 
     # --- draw helpers ---
     def _draw_value_bar(self, x, y, w, h, ratio, label):
